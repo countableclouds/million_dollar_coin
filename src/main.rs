@@ -1,5 +1,6 @@
 use rand::{rngs::ThreadRng, thread_rng, Rng};
 use std::collections::HashMap;
+use std::{thread, time};
 
 fn score(f: impl Fn(usize) -> usize, iterations: usize) -> f64 {
     let mut probabilities: Vec<f64> = Vec::with_capacity(iterations);
@@ -50,61 +51,63 @@ fn score(f: impl Fn(usize) -> usize, iterations: usize) -> f64 {
     init_sum + (1. - total_probability) * 0.5
 }
 
-fn augmented_strategy(custom: HashMap<usize, usize>) -> impl (Fn(usize) -> usize) {
-    move |x| *custom.get(&x).unwrap_or(&(x + 1))
+fn augmented_strategy<'a>(custom: &'a HashMap<usize, usize>) -> impl (Fn(usize) -> usize) + 'a {
+    move |x| custom.get(&x).copied().unwrap_or(x + 1)
 }
 
-fn random_strategy(
-    optimizer: usize,
-    max_test: usize,
-    rng: &mut ThreadRng,
-) -> HashMap<usize, usize> {
-    let mut runner: usize = 1;
-    let mut custom: HashMap<usize, usize> = HashMap::new();
-    for i in 1..optimizer {
-        if runner == i {
-            runner += rng.gen_range(1..max_test);
-        } else {
-            runner += rng.gen_range(0..max_test);
-        }
-        custom.insert(i, runner);
-    }
-    for j in optimizer..runner {
-        custom.insert(j, runner);
-    }
-    custom
+fn to_string(i: usize, f: impl (Fn(usize) -> usize)) -> String {
+    (0..i)
+        .map(|n| format!("({}: {})", n, f(n)))
+        .collect::<Vec<String>>()
+        .join(", ")
 }
 
 fn main() {
     let mut rng = thread_rng();
     // 500:  0.000001 accuracy  in 0.387 ms
     // 100:  0.00004 accuracy in 0.02 ms
-    let iterations: usize = 100;
-    let mut max_custom: HashMap<usize, usize> = HashMap::new();
-    let mut max_score = 0.;
-    // let s = score(augmented_strategy(custom), iterations);
-    for _ in 0..10000000 {
-        let custom = random_strategy(30, 5, &mut rng);
-        let s = score(augmented_strategy(custom.clone()), iterations);
-        if s > max_score {
-            max_score = s;
-            max_custom = custom;
+    let mut counter = 0;
+    let mut strategy: HashMap<usize, usize> = HashMap::new();
+    let mut best_score = score(augmented_strategy(&strategy), 100);
+    let iterations = 400;
+    let mut level = iterations;
+    loop {
+        if counter % 10000 == 0 {
+            println!(
+                "Score: {}\nStrategy: {}\n",
+                best_score,
+                to_string(20, augmented_strategy(&strategy))
+            )
+        }
+
+        counter += 1;
+        level -= 1;
+        // thread::sleep(time::Duration::from_millis(10));
+
+        if strategy.get(&level).unwrap_or(&(level + 1))
+            == strategy.get(&(level + 1)).unwrap_or(&(level + 2))
+        {
+            continue;
+        }
+
+        strategy.insert(level, strategy.get(&level).unwrap_or(&(level + 1)) + 1);
+
+        let new_score = score(augmented_strategy(&strategy), iterations);
+        if new_score > best_score {
+            best_score = new_score;
+            level += 1;
+        } else {
+            strategy.insert(level, strategy.get(&level).unwrap() - 1);
+        }
+
+        if level == 1 {
+            println!("Fully optimized!");
+            println!(
+                "Score: {}\nStrategy: {}\n",
+                best_score,
+                to_string(iterations, augmented_strategy(&strategy))
+            );
+            break;
         }
     }
-    let mut values: Vec<(usize, usize)> = max_custom.iter().map(|(a, b)| (*a, *b)).collect();
-    values.sort_by(|(a, _), (b, _)| a.cmp(b));
-    values = values.iter().map(|(a, b)| (*b, (*a + *b))).collect();
-    println!("{}: {:?}", max_score, values);
-
-    // let s = score(
-    //     |n| {
-    //         if n > 0 {
-    //             n + 2
-    //         } else {
-    //             n + 1
-    //         }
-    //     },
-    //     iterations,
-    // );
-    // println!("The score is {}!", s);
 }
